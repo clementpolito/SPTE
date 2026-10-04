@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import {
 	updateWarningFilterState,
 	rowsDisplay,
@@ -380,5 +380,37 @@ describe('checkTranslation', () => {
 		expect(() => checkTranslation({ projectName: '' }, translated, 'untranslated', 'current')).not.toThrow();
 
 		expect(period.counter).toBe(1);
+	});
+
+	describe('avec un terme du glossaire qui figure dans un nom de marque', () => {
+		const badWords = rules.find((rule) => rule.id === 'badWords');
+		let originalRegex;
+
+		beforeEach(() => {
+			originalRegex = badWords.regex;
+			getGlossaryRegex({ rulesById: new Map([['badWords', badWords]]) }, ['analytics']);
+		});
+
+		afterEach(() => {
+			badWords.regex = originalRegex;
+		});
+
+		it('ne signale pas le terme à l\'intérieur du nom de marque', () => {
+			const translated = document.querySelector('#preview-1-1 .translation-text');
+			translated.innerHTML = 'Activer Google Analytics';
+
+			checkTranslation({ projectName: '' }, translated, 'untranslated', 'current');
+
+			expect(badWords.counter).toBe(0);
+		});
+
+		it('signale le terme en dehors d\'un nom de marque', () => {
+			const translated = document.querySelector('#preview-1-1 .translation-text');
+			translated.innerHTML = 'Le suivi Analytics';
+
+			checkTranslation({ projectName: '' }, translated, 'untranslated', 'current');
+
+			expect(badWords.counter).toBe(1);
+		});
 	});
 });

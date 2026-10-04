@@ -67,7 +67,7 @@ const data = {
  * @param {string} str
  * @returns {string}
  */
-function escapeRegExp(str) {
+export function escapeRegExp(str) {
 	return str.replace(/[-[\]{}()*+?.,\\^$|#\s]/gm, '\\$&');
 }
 

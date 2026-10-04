@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { rules, charTitle, charClass, NBSP, rgxExclamationPointStrict, rgxQuestionMarkStrict, rgxSemiColonStrict } from '../utils/rules';
 import { addStyle, createElement, parseCsv, isPartOfProjectName, stripHighlightTags, isInsideHtmlTag } from '../utils/helpers';
 import { buildWarningSpanHTML } from '../utils/warnings';
+import { isInsideProductName } from '../utils/product-names';
 import { createDefaultSettings } from '../utils/settings';
 import {
 	addForeignToolTip,
@@ -104,6 +105,11 @@ export function checkTranslation(ctx, translation, oldStatus, newStatus) {
 
 			// Le mot fait partie du nom du projet (ex: une extension nommée "Widget") : pas un anglicisme à corriger. Voir issue #38.
 			if (rule.id === 'badWords' && isPartOfProjectName(string, ctx.projectName)) {
+				return string;
+			}
+
+			// Le mot fait partie d'un nom de marque ou d'extension cité dans la traduction (ex: « Search » dans « Google Search Console »).
+			if (rule.id === 'badWords' && isInsideProductName(fullString, offset, string.length)) {
 				return string;
 			}
 
