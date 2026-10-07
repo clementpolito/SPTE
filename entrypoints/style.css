@@ -415,6 +415,32 @@
 	transform: translate(-50%);
 }
 
+/* Tableau d'historique de l'éditeur : la barre latérale (overflow: auto) rogne une bulle en position absolute.
+   La bulle passe en position fixed, placée par JS via --sp-tip-* (voir positionHistoryTooltip). Elle reste là où elle s'est affichée
+   en dernier : pointer-events: none évite qu'on la déclenche en survolant cet emplacement une fois masquée. */
+.sp-history--fixed-tooltip [class*="sp-warning--"]::before,
+.sp-history--fixed-tooltip [class*="sp-warning--"]:hover::before,
+.sp-history--fixed-tooltip [class*="sp-warning--"]:focus::before {
+	position: fixed;
+	left: var(--sp-tip-x, 0);
+	top: var(--sp-tip-y, 0);
+	bottom: auto !important;
+	pointer-events: none;
+	-webkit-transform: translate(-50%, var(--sp-tip-ty, -100%));
+	transform: translate(-50%, var(--sp-tip-ty, -100%));
+}
+
+.sp-history--fixed-tooltip [class*="sp-warning--"]::after,
+.sp-history--fixed-tooltip [class*="sp-warning--"]:hover::after,
+.sp-history--fixed-tooltip [class*="sp-warning--"]:focus::after {
+	position: fixed;
+	left: calc(var(--sp-tip-ax, 0px) - 6px);
+	top: var(--sp-tip-y, 0);
+	pointer-events: none;
+	-webkit-transform: none;
+	transform: none;
+}
+
 .sp-char-details {
 	font-size: 13px;
 	font-weight: normal;

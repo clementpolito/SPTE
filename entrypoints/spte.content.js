@@ -55,7 +55,8 @@ export function updateWarningFilterState(ctx) {
 /** @param {ReturnType<typeof buildContext>} ctx */
 export function rowsDisplay(ctx) {
 	updateWarningFilterState(ctx);
-	const rows = document.querySelectorAll('tr.preview:not(.sp-has-spte-warning)');
+	// Les lignes du tableau d'historique de l'éditeur ne sont pas des traductions de la page : on ne les masque jamais.
+	const rows = [...document.querySelectorAll('tr.preview:not(.sp-has-spte-warning)')].filter((row) => !row.closest('#translation-history-table'));
 	if (ctx.lsShowOnlyWarning) {
 		hideNonWarningRows(rows, Boolean(ctx.bulkActions));
 	} else {
@@ -63,18 +64,17 @@ export function rowsDisplay(ctx) {
 	}
 }
 
-// Avec le statut « rejeté », on ne fait que décompter, pas de surlignage.
-/** @param {ReturnType<typeof buildContext>} ctx */
-export function checkTranslation(ctx, translation, oldStatus, newStatus) {
-	const preview = translation.closest('tr.preview');
-
-	addForeignToolTip(translation);
-
-	// Inutile de traiter les anciennes traductions rejetées, sauf celle qu’on vient de rejeter, et uniquement pour les compteurs.
-	if (!preview || (preview.classList.contains('status-rejected') && newStatus !== 'rejected')) { return; }
-
+/**
+ * Surligne dans `html` les passages que signalent les règles. `onMatch` est appelé à chaque passage retenu (avant son
+ * surlignage) et peut renvoyer false pour ne pas le surligner (cas d'une traduction rejetée).
+ * @param {ReturnType<typeof buildContext>} ctx
+ * @param {string} html
+ * @param {(rule: (typeof rules)[number]) => boolean | void} onMatch
+ * @returns {string} HTML non assaini : les appelants le passent par DOMPurify avant de l'insérer
+ */
+function highlightRules(ctx, html, onMatch) {
 	// GlotDict peut avoir déjà surligné la traduction (et SPTE lui-même en cas de second passage) : on repart du texte seul. Voir issue #80.
-	let text = stripHighlightTags(translation.innerHTML);
+	let text = stripHighlightTags(html);
 
 	// Pour la compatibilité des regex, on remplace les entités HTML d’espace insécable par le vrai caractère. NBSP est écrit avec
 	// un échappement (\u00a0) : un caractère littéral se confond avec une espace normale et peut être normalisé sans que ça se voie (issue #79).
@@ -113,39 +113,55 @@ export function checkTranslation(ctx, translation, oldStatus, newStatus) {
 				return string;
 			}
 
-			// GlotPress a 6 statuts : untranslated, current, fuzzy, waiting, old, rejected. Old et rejected ne doivent pas être comptés.
-			switch (newStatus) {
-			case 'rejected':
-				if (oldStatus !== 'old') {
-					rule.counter--;
-				}
-				break;
-			case 'fuzzy':
-				if (oldStatus === 'rejected') {
-					rule.counter++;
-				}
-				break;
-			case 'current':
-				if (oldStatus !== 'waiting') {
-					rule.counter++;
-				}
-				break;
-			case 'waiting':
-				if (oldStatus !== 'current') {
-					rule.counter++;
-				}
-				break;
-			default:
-				rule.counter++;
-				break;
+			if (onMatch(rule) === false) {
+				return string;
 			}
-			if (newStatus !== 'rejected') {
-				textWithoutTags = textWithoutTags.replace(string, '');
-				return buildWarningSpanHTML(rule, string);
-			}
-			return string;
+			textWithoutTags = textWithoutTags.replace(string, '');
+			return buildWarningSpanHTML(rule, string);
 		});
 	}
+	return text;
+}
+
+// Avec le statut « rejeté », on ne fait que décompter, pas de surlignage.
+/** @param {ReturnType<typeof buildContext>} ctx */
+export function checkTranslation(ctx, translation, oldStatus, newStatus) {
+	const preview = translation.closest('tr.preview');
+
+	addForeignToolTip(translation);
+
+	// Inutile de traiter les anciennes traductions rejetées, sauf celle qu’on vient de rejeter, et uniquement pour les compteurs.
+	if (!preview || (preview.classList.contains('status-rejected') && newStatus !== 'rejected')) { return; }
+
+	const text = highlightRules(ctx, translation.innerHTML, (rule) => {
+		// GlotPress a 6 statuts : untranslated, current, fuzzy, waiting, old, rejected. Old et rejected ne doivent pas être comptés.
+		switch (newStatus) {
+		case 'rejected':
+			if (oldStatus !== 'old') {
+				rule.counter--;
+			}
+			break;
+		case 'fuzzy':
+			if (oldStatus === 'rejected') {
+				rule.counter++;
+			}
+			break;
+		case 'current':
+			if (oldStatus !== 'waiting') {
+				rule.counter++;
+			}
+			break;
+		case 'waiting':
+			if (oldStatus !== 'current') {
+				rule.counter++;
+			}
+			break;
+		default:
+			rule.counter++;
+			break;
+		}
+		return newStatus !== 'rejected';
+	});
 	// Assainissement défensif : text mélange le HTML déjà rendu par GlotPress (translation.innerHTML)
 	// et nos propres <span> de surlignage — DOMPurify neutralise tout contenu exécutable résiduel
 	// sans toucher aux attributs qu'on utilise réellement (class, data-*, aria-*, tabindex).
@@ -155,6 +171,46 @@ export function checkTranslation(ctx, translation, oldStatus, newStatus) {
 	translation.replaceWith(newTranslation);
 	addEditorHighlighter(preview);
 	tagTRTranslations(preview);
+}
+
+// La bulle (largeur 200px + marges) ne doit pas déborder de la fenêtre.
+const TOOLTIP_HALF_WIDTH = 116;
+// Hauteur minimale au-dessus de l'élément pour afficher la bulle dessus ; sinon elle passe dessous.
+const TOOLTIP_MIN_SPACE_ABOVE = 100;
+
+// Dans le tableau d'historique, la barre latérale de l'éditeur rogne la bulle personnalisée (position absolute) : on la passe en
+// position fixed et on calcule ici ses coordonnées, bornées à la fenêtre, au survol ou au focus de l'avertissement.
+/** @param {Element} warning */
+export function positionHistoryTooltip(warning) {
+	const rect = warning.getBoundingClientRect();
+	const centerX = rect.left + (rect.width / 2);
+	const maxX = Math.max(TOOLTIP_HALF_WIDTH, window.innerWidth - TOOLTIP_HALF_WIDTH);
+	const above = rect.top >= TOOLTIP_MIN_SPACE_ABOVE;
+	const style = /** @type {HTMLElement} */ (warning).style;
+	style.setProperty('--sp-tip-x', `${Math.min(Math.max(centerX, TOOLTIP_HALF_WIDTH), maxX)}px`);
+	style.setProperty('--sp-tip-ax', `${centerX}px`);
+	style.setProperty('--sp-tip-y', `${above ? rect.top - 6 : rect.bottom + 6}px`);
+	style.setProperty('--sp-tip-ty', above ? '-100%' : '0');
+}
+
+// Tableau d'historique de l'éditeur (#translation-history-table) : surlignage seul, sans compteurs ni filtres,
+// puisque ces lignes (déjà comptées ou non selon leur statut) ne font pas partie des traductions de la page.
+/** @param {ReturnType<typeof buildContext>} ctx */
+export function highlightHistoryTable(ctx, table) {
+	table.classList.add('sp-history--fixed-tooltip');
+	if (!table.dataset.spTooltipBound) {
+		table.dataset.spTooltipBound = 'true';
+		const onEnter = (e) => {
+			const warning = e.target.closest?.('[class*="sp-warning--"]');
+			if (warning) { positionHistoryTooltip(warning); }
+		};
+		table.addEventListener('mouseover', onEnter);
+		table.addEventListener('focusin', onEnter);
+	}
+	for (const link of table.querySelectorAll('tbody tr td:nth-child(2) a')) {
+		const highlighted = highlightRules(ctx, link.innerHTML, () => true);
+		link.replaceChildren(document.createRange().createContextualFragment(DOMPurify.sanitize(highlighted)));
+	}
 }
 
 /** @param {ReturnType<typeof buildContext>} ctx */
@@ -305,6 +361,20 @@ export function frenchFlag(ctx, spteFrenchFlag) {
 	if (ctx.frenchLocaleCard) {
 		ctx.frenchLocaleCard.classList.add('sp-frenchies', 'sp-frenchies--locale-card');
 	}
+}
+
+// L'éditeur charge le tableau d'historique en AJAX à chaque ouverture : on le surligne dès qu'il apparaît.
+/** @param {ReturnType<typeof buildContext>} ctx */
+function observeHistory(ctx) {
+	const highlightIfHistory = (node) => {
+		if (node.nodeType !== 1) { return; }
+		const table = node.id === 'translation-history-table' ? node : node.querySelector('#translation-history-table');
+		if (table) { highlightHistoryTable(ctx, table); }
+	};
+	document.querySelectorAll('#translation-history-table').forEach((table) => highlightHistoryTable(ctx, table));
+	new MutationObserver((mutations) => {
+		mutations.forEach((mutation) => mutation.addedNodes.forEach(highlightIfHistory));
+	}).observe(ctx.gpContent, { subtree: true, childList: true });
 }
 
 /** @param {ReturnType<typeof buildContext>} ctx */
@@ -540,6 +610,7 @@ function mainProcesses(ctx, spteSettings) {
 		displayResults(ctx);
 		manageControls(ctx);
 		buildHeader(ctx);
+		observeHistory(ctx);
 		if (ctx.isConnected) {
 			observeMutations(ctx);
 		}

@@ -5,6 +5,7 @@ import {
 	updateWarningFilterState,
 	rowsDisplay,
 	checkTranslation,
+	highlightHistoryTable,
 	frenchFlag,
 	gpContentMaxWidth,
 	getGlossaryRegex,
@@ -176,6 +177,23 @@ describe('updateWarningFilterState', () => {
 	});
 });
 
+describe('rowsDisplay avec le tableau d\'historique', () => {
+	it('ne masque pas les lignes du tableau d\'historique', () => {
+		document.body.innerHTML = `
+			<input type="checkbox" id="cb"><label id="lbl"></label>
+			<table><tbody>
+				<tr class="preview sp-has-spte-warning" id="warned"></tr>
+				<tr class="preview" id="clean"></tr>
+			</tbody></table>
+			<table id="translation-history-table"><tbody><tr class="preview" id="hist"></tr></tbody></table>
+		`;
+		const ctx = { lsShowOnlyWarning: true, bulkActions: null, showOnlyWarning: document.getElementById('cb'), showOnlyWarningLabel: document.getElementById('lbl') };
+		rowsDisplay(ctx);
+		expect(document.getElementById('clean').style.display).toBe('none');
+		expect(document.getElementById('hist').style.display).not.toBe('none');
+	});
+});
+
 describe('rowsDisplay', () => {
 	beforeEach(() => {
 		document.body.innerHTML = `
@@ -218,6 +236,71 @@ describe('rowsDisplay', () => {
 		expect(document.getElementById('row2').style.display).not.toBe('none');
 		expect(ctx.showOnlyWarning.checked).toBe(false);
 		expect(ctx.lsShowOnlyWarning).toBe(false);
+	});
+});
+
+describe('highlightHistoryTable', () => {
+	beforeEach(() => {
+		document.body.innerHTML = `
+			<table id="translation-history-table"><thead><tr><th>Date</th><th>Translation</th></tr></thead><tbody>
+				<tr class="preview status-waiting"><td>2026-10-07</td><td><a href="/x">Un plug-in "cité"</a></td></tr>
+				<tr class="preview status-rejected"><td>2026-08-19</td><td><a href="/y">Texte correct</a></td></tr>
+			</tbody></table>
+		`;
+		rules.forEach((rule) => { rule.counter = 0; });
+	});
+
+	it('surligne les passages signalés dans la traduction de chaque ligne', () => {
+		highlightHistoryTable({ projectName: '' }, document.getElementById('translation-history-table'));
+
+		expect(document.querySelectorAll('tbody tr:first-child a .sp-warning--word')).toHaveLength(1);
+		expect(document.querySelectorAll('tbody tr:first-child a .sp-warning--quote')).toHaveLength(2);
+		expect(document.querySelector('tbody tr:last-child a').querySelector('[class*="sp-warning--"]')).toBeNull();
+		expect(document.querySelector('tbody tr:first-child a').textContent).toBe('Un plug-in "cité"');
+	});
+
+	it('ne touche pas aux compteurs ni aux classes de la ligne, et garde le lien', () => {
+		highlightHistoryTable({ projectName: '' }, document.getElementById('translation-history-table'));
+
+		expect(rules.every((rule) => !rule.counter)).toBe(true);
+		expect(document.querySelector('tr.sp-has-spte-warning')).toBeNull();
+		expect(document.querySelector('tbody tr:first-child a').getAttribute('href')).toBe('/x');
+	});
+
+	it('place la bulle en position fixe au survol, bornée à la fenêtre', () => {
+		const table = document.getElementById('translation-history-table');
+		highlightHistoryTable({ projectName: '' }, table);
+		expect(table.classList.contains('sp-history--fixed-tooltip')).toBe(true);
+
+		const warning = document.querySelector('tbody tr:first-child a .sp-warning--quote');
+		warning.getBoundingClientRect = () => ({ left: 0, width: 10, top: 300, bottom: 320 });
+		warning.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+		// Centre à 5px : ramené à la marge gauche pour que la bulle ne sorte pas de la fenêtre.
+		expect(warning.style.getPropertyValue('--sp-tip-x')).toBe('116px');
+		expect(warning.style.getPropertyValue('--sp-tip-ax')).toBe('5px');
+		expect(warning.style.getPropertyValue('--sp-tip-y')).toBe('294px');
+		expect(warning.style.getPropertyValue('--sp-tip-ty')).toBe('-100%');
+	});
+
+	it('place la bulle sous l\'avertissement quand il n\'y a pas la place au-dessus', () => {
+		const table = document.getElementById('translation-history-table');
+		highlightHistoryTable({ projectName: '' }, table);
+
+		const warning = document.querySelector('tbody tr:first-child a .sp-warning--quote');
+		warning.getBoundingClientRect = () => ({ left: 500, width: 10, top: 20, bottom: 40 });
+		warning.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+		expect(warning.style.getPropertyValue('--sp-tip-y')).toBe('46px');
+		expect(warning.style.getPropertyValue('--sp-tip-ty')).toBe('0');
+	});
+
+	it('est idempotent si le tableau est traité deux fois', () => {
+		const table = document.getElementById('translation-history-table');
+		highlightHistoryTable({ projectName: '' }, table);
+		highlightHistoryTable({ projectName: '' }, table);
+
+		expect(document.querySelectorAll('tbody tr:first-child a .sp-warning--quote')).toHaveLength(2);
 	});
 });
 
